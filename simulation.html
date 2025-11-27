@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Kairo Simulation</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      overflow: hidden;
+    }
+    canva
+      display: block;
+    }
+  </style>
+</head>
+<body>
+<canvas id="sim"></canvas>
+
+<script>
+const canvas = document.getElementById("sim");
+const ctx = canvas.getContext("2d");
+
+let width = window.innerWidth;
+let height = window.innerHeight;
+canvas.width = width;
+canvas.height = height;
+
+window.addEventListener("resize", () => {
+  width = window.innerWidth;
+  height = window.innerHeight;
+  canvas.width = width;
+  canvas.height = height;
+});
+
+// --- simulation parameters ---
+const NUM_DOTS         = 300;
+
+// proximity now based on edge-to-edge gap, not center distance
+const MIN_GAP           = 0;      // if edges touch/overlap they die
+const MAX_GAP           = 80;     // if edges farther apart than this they attract
+const ATTRACTION        = 0.0003; // strength of attraction
+const MAX_SPEED         = 0.1;    // cap velocity
+const RESPAWN_ON_DEATH  = false;   // keep population constant
+
+class Dot {
+  constructor() {
+    this.reset();
+  }
+
+  reset() {
+    this.x = Math.random() * width;
+    this.y = Math.random() * height;
+    this.vx = (Math.random() - 0.5) * 0.3;
+    this.vy = (Math.random() - 0.5) * 0.3;
+
+    // Bigger dots + different brightness
+    this.radius = 1 + Math.random() * 8;
+    this.alpha  = 0.2 + Math.random() * 0.8;
+    this.dead   = false;
+  }
+
+  update(dt) {
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+
+    // wrap around screen edges
+    if (this.x < 0) this.x += width;
+    if (this.x > width) this.x -= width;
+    if (this.y < 0) this.y += height;
+    if (this.y > height) this.y -= height;
+
+    // speed cap
+    const speed = Math.hypot(this.vx, this.vy);
+    if (speed > MAX_SPEED) {
+      const s = MAX_SPEED / speed;
+      this.vx *= s;
+      this.vy *= s;
+    }
+  }
+
+  draw(ctx) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(255,255,255,${this.alpha})`;
+    ctx.shadowColor = "rgba(255,255,255,0.8)";
+    ctx.shadowBlur = this.radius * 3;
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+const dots = [];
+for (let i = 0; i < NUM_DOTS; i++) {
+  dots.push(new Dot());
+}
+
+let lastTime = performance.now();
+
+function step(timestamp) {
+  const dt = (timestamp - lastTime) / 16; // ~1 at 60fps
+  lastTime = timestamp;
+
+  // clear background
+  ctx.fillStyle = "rgb(0,0,0)";
+  ctx.fillRect(0, 0, width, height);
+
+  // --- pairwise interactions (nearest neighbour per dot) ---
+  for (let i = 0; i < dots.length; i++) {
+    const a = dots[i];
+    if (a.dead) continue;
+
+    let nearest = null;
+    let nearestD2 = Infinity;
+    let dxToNearest = 0;
+    let dyToNearest = 0;
+
+    for (let j = 0; j < dots.length; j++) {
+      if (i === j) continue;
+      const b = dots[j];
+      if (b.dead) continue;
+
+      let dx = b.x - a.x;
+      let dy = b.y - a.y;
+
+      // handle wrap-around distances (torus space)
+      if (dx >  width / 2) dx -= width;
+      if (dx < -width / 2) dx += width;
+      if (dy >  height / 2) dy -= height;
+      if (dy < -height / 2) dy += height;
+
+      const d2 = dx * dx + dy * dy;
+      if (d2 < nearestD2) {
+        nearestD2 = d2;
+        nearest = b;
+        dxToNearest = dx;
+        dyToNearest = dy;
+      }
+    }
+
+    if (!nearest) continue;
+
+    const dist = Math.sqrt(nearestD2);
+
+    // edge-to-edge gap instead of center distance
+    const gap = dist - (a.radius + nearest.radius);
+
+    // kill if surfaces are closer than MIN_GAP
+    if (gap < MIN_GAP) {
+      a.dead = true;
+      nearest.dead = true;
+      continue;
+    }
+
+    // attract if surfaces are farther apart than MAX_GAP
+    if (gap > MAX_GAP) {
+      const ux = dxToNearest / dist;
+      const uy = dyToNearest / dist;
+      const f = ATTRACTION * (gap - MAX_GAP);
+
+      a.vx += ux * f * dt;
+      a.vy += uy * f * dt;
+      nearest.vx -= ux * f * dt;
+      nearest.vy -= uy * f * dt;
+    }
+  }
+
+  // update & draw
+  for (const d of dots) {
+    if (d.dead) {
+      if (RESPAWN_ON_DEATH) {
+        d.reset(); // respawn as a new dot
+      } else {
+        continue;  // don't update or draw dead dots
+      }
+    } else {
+      d.update(dt);
+    }
+    d.draw(ctx);
+  }
+
+  requestAnimationFrame(step);
+}
+
+requestAnimationFrame(step);
+</script>
+</body>
+</html>
